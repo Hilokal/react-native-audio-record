@@ -3,8 +3,10 @@ declare module "react-native-audio-record" {
     init: (options: Options) => void
     start: () => void
     stop: () => Promise<string>
-    on: (event: "data", callback: (data: string) => void) => void
+    on: (event: EventOptions, callback: (data: string) => void) => void
   }
+  
+  export type EventOptions = "data" | "metering";
 
   export interface Options {
     sampleRate: number
