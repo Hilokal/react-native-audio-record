@@ -25,4 +25,15 @@ AudioRecord.on = (event, callback) => {
   return EventEmitter.addListener(nativeEvent, callback);
 };
 
+AudioRecord.removeListener = (event) => {
+  const nativeEvent = eventsMap[event];
+
+  if (!nativeEvent) {
+    throw new Error("Invalid event");
+  }
+
+  return EventEmitter.removeAllListeners(nativeEvent);
+};
+
 export default AudioRecord;
+
