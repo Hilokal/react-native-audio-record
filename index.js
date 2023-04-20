@@ -1,5 +1,6 @@
-import { DeviceEventEmitter, NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, NativeEventEmitter } from 'react-native';
 const { RNAudioRecord } = NativeModules;
+const EventEmitter = new NativeEventEmitter(RNAudioRecord);
 
 const AudioRecord = {};
 
@@ -16,17 +17,12 @@ AudioRecord.on = (event, callback) => {
   const nativeEvent = eventsMap[event];
 
   if (!nativeEvent) {
-    throw new Error('Invalid event');
+    throw new Error("Invalid event");
   }
 
-  if (Platform.OS === 'android') {
-    const EventEmitter = DeviceEventEmitter.addListener(nativeEvent, callback);
-    return EventEmitter;
-  } else {
-    const EventEmitter = new NativeEventEmitter(RNAudioRecord);
-    EventEmitter.removeAllListeners(nativeEvent);
-    return EventEmitter.addListener(nativeEvent, callback);
-  }
+  EventEmitter.removeAllListeners(nativeEvent);
+
+  return EventEmitter.addListener(nativeEvent, callback);
 };
 
 export default AudioRecord;
