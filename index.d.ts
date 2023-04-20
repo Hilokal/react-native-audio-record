@@ -1,31 +1,32 @@
 declare module "react-native-audio-record" {
   export interface IAudioRecord {
-    init: (options: Options) => void
-    start: () => void
-    stop: () => Promise<string>
-    on: (event: EventOptions, callback: (data: string) => void) => void
+    init: (options: Options) => void;
+    start: () => void;
+    stop: () => Promise<string>;
+    on: (event: EventOptions, callback: (data: string) => void) => void;
+    removeListener: (event: EventOptions) => void;
   }
-  
+
   export type EventOptions = "data" | "metering";
 
   export interface Options {
-    sampleRate: number
+    sampleRate: number;
     /**
      * - `1 | 2`
      */
-    channels: number
+    channels: number;
     /**
      * - `8 | 16`
      */
-    bitsPerSample: number
+    bitsPerSample: number;
     /**
      * - `6`
      */
-    audioSource?: number
-    wavFile: string
+    audioSource?: number;
+    wavFile: string;
   }
 
-  const AudioRecord: IAudioRecord
+  const AudioRecord: IAudioRecord;
 
   export default AudioRecord;
 }
