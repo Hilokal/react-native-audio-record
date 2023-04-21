@@ -30,6 +30,10 @@ RCT_EXPORT_METHOD(start: (RCTPromiseResolveBlock)resolve
 
     RCTLogInfo(@"start");
 
+    if (_recordState.mIsRunning) {
+        reject(@"start_failed", @"start() called but recorder already running", nil);
+        return;
+    }
 
     // most audio players set session category to "Playback", record won't work in this mode
     // therefore set session category to "Record" before recording
@@ -74,12 +78,17 @@ RCT_EXPORT_METHOD(start: (RCTPromiseResolveBlock)resolve
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
                   rejecter:(__unused RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"stop");
-    if (_recordState.mIsRunning) {
-        _recordState.mIsRunning = false;
-        AudioQueueStop(_recordState.mQueue, true);
-        AudioQueueDispose(_recordState.mQueue, true);
-        AudioFileClose(_recordState.mAudioFile);
+
+    if (!_recordState.mIsRunning) {
+        reject(@"stop_failed", @"stop() called but recorder not running", nil);
+        return;
     }
+
+    AudioQueueStop(_recordState.mQueue, true);
+    AudioQueueDispose(_recordState.mQueue, true);
+    AudioFileClose(_recordState.mAudioFile);
+
+    _recordState.mIsRunning = false;
 
     NSDictionary *eventData = @{
       @"filePath": _filePath,
