@@ -10,7 +10,6 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
-import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.bridge.ReadableMap;
@@ -109,6 +108,8 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     byte[] buffer = new byte[bufferSize];
                     FileOutputStream os = new FileOutputStream(tmpFile);
 
+                    int bytesPerSample = (audioFormat == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
+
                     // Metering is only enabled for 16-bit, mono audio. If we ever want to support
                     // other modes, we need to update our metering algorithm.
                     boolean meteringEnabled = (
@@ -125,13 +126,14 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                             //base64Data = Base64.encodeToString(buffer, Base64.NO_WRAP);
                             //eventEmitter.emit("data", base64Data);
 
+                            if (meteringEnabled) {
+                                WritableMap meteringEvent = createMeteringEvent(buffer, bytesRead);
+                                meteringEvent.putDouble("currentPosition", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
+                                eventEmitter.emit("metering", meteringEvent);
+                            }
+
                             convertToLittleEndian(buffer, bytesRead);
                             os.write(buffer, 0, bytesRead);
-                        }
-
-                        if (meteringEnabled) {
-                            ReadableMap meteringEvent = createMeteringEvent(buffer, bytesRead);
-                            eventEmitter.emit("metering", meteringEvent);
                         }
                     }
 
@@ -139,13 +141,13 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     os.close();
                     saveAsWav();
 
-                    int bytesPerSample = (audioFormat == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
                     int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
 
                     WritableMap promiseResult = Arguments.createMap();
                     promiseResult.putString("filePath", outFile);
                     promiseResult.putInt("sampleRate", recorder.getSampleRate());
                     promiseResult.putInt("sampleCount", sampleCount);
+                    promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
 
                     stopRecordingPromise.resolve(promiseResult);
                 } catch (Exception e) {
@@ -163,7 +165,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         stopRecordingPromise = promise;
     }
 
-    private static ReadableMap createMeteringEvent(byte[] byteArray, int bytesRead) {
+    private static WritableMap createMeteringEvent(byte[] byteArray, int bytesRead) {
         ByteBuffer buffer = ByteBuffer.wrap(byteArray);
         buffer.order(ByteOrder.nativeOrder());
 
@@ -190,6 +192,9 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
         map.putDouble("average", avgdB);
         map.putDouble("peak", peakdB);
+
+	// Alias to compatibility with react-native-audio-recorder-player
+        map.putDouble("currentMetering", avgdB);
 
         return map;
     }

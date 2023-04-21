@@ -84,7 +84,8 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
     NSDictionary *eventData = @{
       @"filePath": _filePath,
       @"sampleCount": @(_recordState.mCurrentPacket),
-      @"sampleRate": @(_recordState.mDataFormat.mSampleRate)
+      @"sampleRate": @(_recordState.mDataFormat.mSampleRate),
+      @"duration": @((double) _recordState.mCurrentPacket / _recordState.mDataFormat.mSampleRate)
     };
 
     resolve(eventData);
@@ -133,7 +134,14 @@ void HandleInputBuffer(void *inUserData,
 
     OSStatus rc = AudioQueueGetProperty(inAQ, kAudioQueueProperty_CurrentLevelMeterDB, levels, &dataSize);
     if (rc == noErr) {
+        double currentPosition = 0;
+        if (inStartTime != NULL) {
+            currentPosition = inStartTime->mSampleTime / pRecordState->mDataFormat.mSampleRate;
+        }
+
         NSDictionary *eventData = @{
+          @"currentPosition": @(currentPosition),
+          @"currentMetering": @(levels[0].mAveragePower),
           @"average": @(levels[0].mAveragePower),
           @"peak": @(levels[0].mPeakPower)
         };
