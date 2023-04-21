@@ -25,12 +25,19 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
     _filePath = [NSString stringWithFormat:@"%@/%@", docDir, fileName];
 }
 
-RCT_EXPORT_METHOD(start) {
+RCT_EXPORT_METHOD(start: (RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+
     RCTLogInfo(@"start");
+
+    if (_recordState.mIsRunning) {
+        reject(@"start_failed", @"start() called but recorder already running", nil);
+        return;
+    }
 
     // most audio players set session category to "Playback", record won't work in this mode
     // therefore set session category to "Record" before recording
-    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryRecord error:nil];
+    [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord error:nil];
 
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
@@ -39,24 +46,59 @@ RCT_EXPORT_METHOD(start) {
     AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
     CFRelease(url);
     
-    AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
+    OSStatus status = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
+    if (status != noErr) {
+        NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+        reject(@"osstatus_error", @"AudioQueueNewInput failed", error);
+        return;
+    }
+
     for (int i = 0; i < kNumberBuffers; i++) {
         AudioQueueAllocateBuffer(_recordState.mQueue, _recordState.bufferByteSize, &_recordState.mBuffers[i]);
         AudioQueueEnqueueBuffer(_recordState.mQueue, _recordState.mBuffers[i], 0, NULL);
     }
-    AudioQueueStart(_recordState.mQueue, NULL);
+
+    // Enable level metering
+    UInt32 enabled = true;
+    status = AudioQueueSetProperty(_recordState.mQueue, kAudioQueueProperty_EnableLevelMetering, &enabled, sizeof(enabled));
+    if (status != noErr) {
+        RCTLogWarn(@"AudioQueueSetProperty(kAudioQueueProperty_EnableLevelMetering) failed");
+    }
+
+    status = AudioQueueStart(_recordState.mQueue, NULL);
+    if (status != noErr) {
+        NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+        reject(@"osstatus_error", @"AudioQueueStart failed", error);
+        return;
+    }
+
+    resolve(@YES);
 }
 
 RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
                   rejecter:(__unused RCTPromiseRejectBlock)reject) {
     RCTLogInfo(@"stop");
-    if (_recordState.mIsRunning) {
-        _recordState.mIsRunning = false;
-        AudioQueueStop(_recordState.mQueue, true);
-        AudioQueueDispose(_recordState.mQueue, true);
-        AudioFileClose(_recordState.mAudioFile);
+
+    if (!_recordState.mIsRunning) {
+        reject(@"stop_failed", @"stop() called but recorder not running", nil);
+        return;
     }
-    resolve(_filePath);
+
+    AudioQueueStop(_recordState.mQueue, true);
+    AudioQueueDispose(_recordState.mQueue, true);
+    AudioFileClose(_recordState.mAudioFile);
+
+    _recordState.mIsRunning = false;
+
+    NSDictionary *eventData = @{
+      @"filePath": _filePath,
+      @"sampleCount": @(_recordState.mCurrentPacket),
+      @"sampleRate": @(_recordState.mDataFormat.mSampleRate),
+      @"duration": @((double) _recordState.mCurrentPacket / _recordState.mDataFormat.mSampleRate)
+    };
+
+    resolve(eventData);
+
     unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
     RCTLogInfo(@"file path %@", _filePath);
     RCTLogInfo(@"file size %llu", fileSize);
@@ -85,17 +127,42 @@ void HandleInputBuffer(void *inUserData,
         pRecordState->mCurrentPacket += inNumPackets;
     }
     
-    short *samples = (short *) inBuffer->mAudioData;
-    long nsamples = inBuffer->mAudioDataByteSize;
-    NSData *data = [NSData dataWithBytes:samples length:nsamples];
-    NSString *str = [data base64EncodedStringWithOptions:0];
-    [pRecordState->mSelf sendEventWithName:@"data" body:str];
+    // Commenting out the data event. It seems wasteful to send all this over
+    // javascript bridge when we don't need to use it
+
+    //short *samples = (short *) inBuffer->mAudioData;
+    //long nsamples = inBuffer->mAudioDataByteSize;
+
+    //NSData *data = [NSData dataWithBytes:samples length:nsamples];
+    //NSString *str = [data base64EncodedStringWithOptions:0];
+    //[pRecordState->mSelf sendEventWithName:@"data" body:str];
+
+    UInt32 dataSize = sizeof(AudioQueueLevelMeterState) * 10;
+
+    AudioQueueLevelMeterState *levels = (AudioQueueLevelMeterState*)malloc(dataSize);
+
+    OSStatus rc = AudioQueueGetProperty(inAQ, kAudioQueueProperty_CurrentLevelMeterDB, levels, &dataSize);
+    if (rc == noErr) {
+        double currentPosition = 0;
+        if (inStartTime != NULL) {
+            currentPosition = inStartTime->mSampleTime / pRecordState->mDataFormat.mSampleRate;
+        }
+
+        NSDictionary *eventData = @{
+          @"currentPosition": @(currentPosition),
+          @"currentMetering": @(levels[0].mAveragePower),
+          @"average": @(levels[0].mAveragePower),
+          @"peak": @(levels[0].mPeakPower)
+        };
+
+        [pRecordState->mSelf sendEventWithName:@"metering" body:eventData];
+    }
     
     AudioQueueEnqueueBuffer(pRecordState->mQueue, inBuffer, 0, NULL);
 }
 
 - (NSArray<NSString *> *)supportedEvents {
-    return @[@"data"];
+    return @[@"data", @"metering"];
 }
 
 - (void)dealloc {
