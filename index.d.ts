@@ -1,13 +1,27 @@
 declare module "react-native-audio-record" {
+  export type AudioRecordFinished = {
+    filePath: string;
+    duration: number;
+    sampleCount: number;
+    sampleRate: number;
+  };
+
+  export type AudioRecordMeteringEvent = {
+    currentMetering: number;
+    currentPosition: number;
+    average: number;
+    peak: number;
+  };
+
   export interface IAudioRecord {
     init: (options: Options) => void;
     start: () => void;
-    stop: () => Promise<string>;
-    on: (event: EventOptions, callback: (data: string) => void) => void;
+    stop: () => Promise<AudioRecordFinished>;
+    on: (event: "metering", callback: (data: AudioRecordMeteringEvent) => void) => void;
     removeListener: (event: EventOptions) => void;
   }
 
-  export type EventOptions = "data" | "metering";
+  export type EventOptions = "metering";
 
   export interface Options {
     sampleRate: number;
