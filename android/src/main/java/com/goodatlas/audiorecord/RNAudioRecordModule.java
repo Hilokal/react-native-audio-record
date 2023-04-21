@@ -13,6 +13,7 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.Arguments;
 
 import java.io.File;
@@ -81,7 +82,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         tmpFile = documentDirectoryPath + "/" + "temp.pcm";
         if (options.hasKey("wavFile")) {
             String fileName = options.getString("wavFile");
-            outFile = "file:///" + documentDirectoryPath + "/" + fileName;
+            outFile = documentDirectoryPath + "/" + fileName;
         }
 
         isRecording = false;
@@ -102,36 +103,53 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
             public void run() {
                 try {
                     int bytesRead;
+                    int bytesCount = 0;
                     int count = 0;
-                    String base64Data;
+                    //String base64Data;
                     byte[] buffer = new byte[bufferSize];
                     FileOutputStream os = new FileOutputStream(tmpFile);
-                    WritableMap obj = Arguments.createMap();
-                    ByteBuffer bufferTest = ByteBuffer.wrap(buffer); // create a ByteBuffer from the array
+
+                    // Metering is only enabled for 16-bit, mono audio. If we ever want to support
+                    // other modes, we need to update our metering algorithm.
+                    boolean meteringEnabled = (
+                            audioFormat == AudioFormat.ENCODING_PCM_16BIT && channelConfig == AudioFormat.CHANNEL_IN_MONO
+                    );
 
                     while (isRecording) {
                         bytesRead = recorder.read(buffer, 0, buffer.length);
                         // skip first 2 buffers to eliminate "click sound"
                         if (bytesRead > 0 && ++count > 2) {
-                            base64Data = Base64.encodeToString(buffer, Base64.NO_WRAP);
-                            eventEmitter.emit("data", base64Data);
+                            bytesCount += bytesRead;
+
+                            // Commenting out data event because we don't need it
+                            //base64Data = Base64.encodeToString(buffer, Base64.NO_WRAP);
+                            //eventEmitter.emit("data", base64Data);
+
+                            convertToLittleEndian(buffer, bytesRead);
                             os.write(buffer, 0, bytesRead);
                         }
 
-                        int sum = 0;
-                        for (int i = 0; i < bytesRead; i++) {
-                             sum += buffer[i] * buffer[i];
+                        if (meteringEnabled) {
+                            ReadableMap meteringEvent = createMeteringEvent(buffer, bytesRead);
+                            eventEmitter.emit("metering", meteringEvent);
                         }
-                        double averageAmplitude = Math.sqrt(sum / bytesRead);
-                        eventEmitter.emit("metering", averageAmplitude);
                     }
 
                     recorder.stop();
                     os.close();
                     saveAsWav();
-                    stopRecordingPromise.resolve(outFile);
+
+                    int bytesPerSample = (audioFormat == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
+                    int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
+
+                    WritableMap promiseResult = Arguments.createMap();
+                    promiseResult.putString("filePath", outFile);
+                    promiseResult.putInt("sampleRate", recorder.getSampleRate());
+                    promiseResult.putInt("sampleCount", sampleCount);
+
+                    stopRecordingPromise.resolve(promiseResult);
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    stopRecordingPromise.reject(e);
                 }
             }
         });
@@ -145,34 +163,73 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         stopRecordingPromise = promise;
     }
 
-    private void saveAsWav() {
-        try {
-            FileInputStream in = new FileInputStream(tmpFile);
-            FileOutputStream out = new FileOutputStream(outFile);
-            long totalAudioLen = in.getChannel().size();
-            ;
-            long totalDataLen = totalAudioLen + 36;
+    private static ReadableMap createMeteringEvent(byte[] byteArray, int bytesRead) {
+        ByteBuffer buffer = ByteBuffer.wrap(byteArray);
+        buffer.order(ByteOrder.nativeOrder());
 
-            addWavHeader(out, totalAudioLen, totalDataLen);
+        int numSamples = bytesRead / 2; // each sample is 2 bytes (16 bits)
 
-            byte[] data = new byte[bufferSize];
-            int bytesRead;
-            while ((bytesRead = in.read(data)) != -1) {
-                out.write(data, 0, bytesRead);
+        double sum = 0;
+        double maxSample = 0;
+        for (int i = 0; i < numSamples; i++) {
+            short sample = buffer.getShort(); // read the next 16-bit sample
+            sum += sample * sample; // accumulate the sum of squared samples
+
+            // update the maximum sample value
+            double sampleAbs = Math.abs((double) sample / Short.MAX_VALUE);
+            if (sampleAbs > maxSample) {
+                maxSample = sampleAbs;
             }
-            Log.d(TAG, "file path:" + outFile);
-            Log.d(TAG, "file size:" + out.getChannel().size());
+        }
 
-            in.close();
-            out.close();
-            deleteTempFile();
-        } catch (Exception e) {
-            e.printStackTrace();
+        double rms = Math.sqrt(sum / numSamples); // compute the root-mean-square value
+        double avgdB = 20 * Math.log10(rms / Short.MAX_VALUE);
+        double peakdB = 20 * Math.log10(maxSample);
+
+        WritableMap map = Arguments.createMap();
+
+        map.putDouble("average", avgdB);
+        map.putDouble("peak", peakdB);
+
+        return map;
+    }
+
+    public static void convertToLittleEndian(byte[] bytes, int byteCount) {
+        if (ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN) {
+            // If the native byte order is already little endian, do nothing
+            return;
+        }
+        for (int i = 0; i < byteCount; i += 2) {
+            byte temp = bytes[i];
+            bytes[i] = bytes[i + 1];
+            bytes[i + 1] = temp;
         }
     }
 
+    private void saveAsWav() throws java.io.IOException {
+        FileInputStream in = new FileInputStream(tmpFile);
+        FileOutputStream out = new FileOutputStream(outFile);
+        long totalAudioLen = in.getChannel().size();
+        ;
+        long totalDataLen = totalAudioLen + 36;
+
+        addWavHeader(out, totalAudioLen, totalDataLen);
+
+        byte[] data = new byte[bufferSize];
+        int bytesRead;
+        while ((bytesRead = in.read(data)) != -1) {
+            out.write(data, 0, bytesRead);
+        }
+        Log.d(TAG, "file path:" + outFile);
+        Log.d(TAG, "file size:" + out.getChannel().size());
+
+        in.close();
+        out.close();
+        deleteTempFile();
+    }
+
     private void addWavHeader(FileOutputStream out, long totalAudioLen, long totalDataLen)
-            throws Exception {
+            throws java.io.IOException {
 
         long sampleRate = sampleRateInHz;
         int channels = channelConfig == AudioFormat.CHANNEL_IN_MONO ? 1 : 2;
