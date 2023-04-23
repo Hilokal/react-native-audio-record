@@ -36,7 +36,6 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     private int bufferSize;
     private boolean isRecording;
 
-    private String tmpFile;
     private String outFile;
     private Promise stopRecordingPromise;
 
@@ -78,7 +77,6 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
         String documentDirectoryPath = getReactApplicationContext().getFilesDir().getAbsolutePath();
         outFile = documentDirectoryPath + "/" + "audio.wav";
-        tmpFile = documentDirectoryPath + "/" + "temp.pcm";
         if (options.hasKey("wavFile")) {
             String fileName = options.getString("wavFile");
             outFile = documentDirectoryPath + "/" + fileName;
@@ -95,17 +93,25 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void start() {
         isRecording = true;
+        stopRecordingPromise = null;
+
         recorder.startRecording();
         Log.d(TAG, "started recording");
 
         Thread recordingThread = new Thread(new Runnable() {
             public void run() {
+                File tmpFile = null;
+
                 try {
                     int bytesRead;
                     int bytesCount = 0;
                     int count = 0;
                     //String base64Data;
                     byte[] buffer = new byte[bufferSize];
+
+                    tmpFile = File.createTempFile("audio", ".pcm");
+                    tmpFile.deleteOnExit();
+
                     FileOutputStream os = new FileOutputStream(tmpFile);
 
                     int bytesPerSample = (audioFormat == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
@@ -139,7 +145,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
                     recorder.stop();
                     os.close();
-                    saveAsWav();
+                    saveAsWav(tmpFile);
 
                     int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
 
@@ -149,9 +155,17 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     promiseResult.putInt("sampleCount", sampleCount);
                     promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
 
-                    stopRecordingPromise.resolve(promiseResult);
+                    if (stopRecordingPromise != null) {
+                        stopRecordingPromise.resolve(promiseResult);
+                    }
                 } catch (Exception e) {
-                    stopRecordingPromise.reject(e);
+                    if (stopRecordingPromise != null) {
+                        stopRecordingPromise.reject(e);
+                    }
+                } finally {
+                    if (tmpFile != null) {
+                        tmpFile.delete();
+                    }
                 }
             }
         });
@@ -211,11 +225,10 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         }
     }
 
-    private void saveAsWav() throws java.io.IOException {
-        FileInputStream in = new FileInputStream(tmpFile);
+    private void saveAsWav(File pcmFile) throws java.io.IOException {
+        FileInputStream in = new FileInputStream(pcmFile);
         FileOutputStream out = new FileOutputStream(outFile);
         long totalAudioLen = in.getChannel().size();
-        ;
         long totalDataLen = totalAudioLen + 36;
 
         addWavHeader(out, totalAudioLen, totalDataLen);
@@ -230,7 +243,6 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
         in.close();
         out.close();
-        deleteTempFile();
     }
 
     private void addWavHeader(FileOutputStream out, long totalAudioLen, long totalDataLen)
@@ -290,11 +302,6 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         header[43] = (byte) ((totalAudioLen >> 24) & 0xff);
 
         out.write(header, 0, 44);
-    }
-
-    private void deleteTempFile() {
-        File file = new File(tmpFile);
-        file.delete();
     }
 }
 
