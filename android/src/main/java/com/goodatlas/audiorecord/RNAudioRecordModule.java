@@ -34,10 +34,9 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
     private AudioRecord recorder;
     private int bufferSize;
-    private boolean isRecording;
 
     private String outFile;
-    private Promise stopRecordingPromise;
+    volatile private Promise stopRecordingPromise;
 
     public RNAudioRecordModule(ReactApplicationContext reactContext) {
         super(reactContext);
@@ -82,7 +81,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
             outFile = documentDirectoryPath + "/" + fileName;
         }
 
-        isRecording = false;
+        stopRecordingPromise = null;
         eventEmitter = reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class);
 
         bufferSize = AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat);
@@ -92,8 +91,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void start() {
-        isRecording = true;
-        stopRecordingPromise = null;
+        setPromise(null);
 
         recorder.startRecording();
         Log.d(TAG, "started recording");
@@ -122,7 +120,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                             audioFormat == AudioFormat.ENCODING_PCM_16BIT && channelConfig == AudioFormat.CHANNEL_IN_MONO
                     );
 
-                    while (isRecording) {
+                    while (stopRecordingPromise == null) {
                         bytesRead = recorder.read(buffer, 0, buffer.length);
                         // skip first 2 buffers to eliminate "click sound"
                         if (bytesRead > 0 && ++count > 2) {
@@ -155,12 +153,12 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     promiseResult.putInt("sampleCount", sampleCount);
                     promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
 
-                    if (stopRecordingPromise != null) {
-                        stopRecordingPromise.resolve(promiseResult);
-                    }
+                    getPromise().resolve(promiseResult);
                 } catch (Exception e) {
-                    if (stopRecordingPromise != null) {
-                        stopRecordingPromise.reject(e);
+                    try {
+                        Promise promise = getPromise();
+                        promise.reject(e);
+                    } catch (InterruptedException ignored) {
                     }
                 } finally {
                     if (tmpFile != null) {
@@ -175,8 +173,19 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void stop(Promise promise) {
-        isRecording = false;
+        setPromise(promise);
+    }
+
+    synchronized private void setPromise(Promise promise) {
         stopRecordingPromise = promise;
+        notifyAll();
+    }
+
+    synchronized private Promise getPromise() throws InterruptedException {
+        while (stopRecordingPromise == null) {
+            wait();
+        }
+        return stopRecordingPromise;
     }
 
     private static WritableMap createMeteringEvent(byte[] byteArray, int bytesRead) {
