@@ -144,7 +144,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
 
                     WritableMap promiseResult = Arguments.createMap();
-                    promiseResult.putString("filePath", outFile);
+                    promiseResult.putString("filePath", "file://" + outFile);
                     promiseResult.putInt("sampleRate", recorder.getSampleRate());
                     promiseResult.putInt("sampleCount", sampleCount);
                     promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
