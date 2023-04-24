@@ -130,7 +130,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                             //base64Data = Base64.encodeToString(buffer, Base64.NO_WRAP);
                             //eventEmitter.emit("data", base64Data);
 
-                            if (meteringEnabled) {
+                            if (meteringEnabled && listenerCount > 0) {
                                 WritableMap meteringEvent = createMeteringEvent(buffer, bytesRead);
                                 meteringEvent.putDouble("currentPosition", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
                                 eventEmitter.emit("metering", meteringEvent);
@@ -179,11 +179,12 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void cleanupFiles(Promise promise) {
         File directory = getDirectory();
-        Log.d(TAG, "Cleaning directory: " + directory.toString());
+        Log.d(TAG, "Cleaning directory: " + directory);
         File[] files = directory.listFiles();
         if (files != null) {
             for(File file : files){
                 if(!file.isDirectory() && file.getName().endsWith(".wav")){
+                    Log.d(TAG, "Deleting file: " + file);
                     file.delete();
                 }
             }
@@ -193,6 +194,18 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     public File getDirectory() {
         File parentDir = getReactApplicationContext().getCacheDir();
         return new File(parentDir, "audio-wav");
+    }
+
+    private int listenerCount = 0;
+
+    @ReactMethod
+    public void addListener(String eventName) {
+        listenerCount += 1;
+    }
+
+    @ReactMethod
+    public void removeListeners(Integer count) {
+        listenerCount -= count;
     }
 
     synchronized private void setPromise(Promise promise) {
