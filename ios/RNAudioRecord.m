@@ -4,6 +4,15 @@
 
 RCT_EXPORT_MODULE();
 
+NSURL * FilesDirectory(void) {
+    NSURL *tempDirectoryURL = [NSURL fileURLWithPath:NSTemporaryDirectory()];
+    NSURL *myTempDirURL = [tempDirectoryURL URLByAppendingPathComponent:@"wav-audio"];
+
+    return myTempDirURL;
+}
+
+bool hasListeners;
+
 RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
     RCTLogInfo(@"init");
     _recordState.mDataFormat.mSampleRate        = options[@"sampleRate"] == nil ? 44100 : [options[@"sampleRate"] doubleValue];
@@ -21,8 +30,8 @@ RCT_EXPORT_METHOD(init:(NSDictionary *) options) {
     _recordState.mSelf = self;
     
     NSString *fileName = options[@"wavFile"] == nil ? @"audio.wav" : options[@"wavFile"];
-    NSString *docDir = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    _filePath = [NSString stringWithFormat:@"%@/%@", docDir, fileName];
+
+    _fileURL = [FilesDirectory() URLByAppendingPathComponent: fileName];
 }
 
 RCT_EXPORT_METHOD(start: (RCTPromiseResolveBlock)resolve
@@ -42,9 +51,22 @@ RCT_EXPORT_METHOD(start: (RCTPromiseResolveBlock)resolve
     _recordState.mIsRunning = true;
     _recordState.mCurrentPacket = 0;
     
-    CFURLRef url = CFURLCreateWithString(kCFAllocatorDefault, (CFStringRef)_filePath, NULL);
-    AudioFileCreateWithURL(url, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
-    CFRelease(url);
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] createDirectoryAtURL:FilesDirectory() withIntermediateDirectories:YES attributes:nil error:&error]) {
+        reject(@"start_failed", @"createDirectoryAtPath failed", error);
+        return;
+    }
+
+    CFURLRef cfURL = CFBridgingRetain(_fileURL);
+    if (cfURL == NULL) {
+        reject(@"start_failed", @"Converstion to CFURL failed", nil);
+        return;
+    }
+
+    AudioFileCreateWithURL(cfURL, kAudioFileWAVEType, &_recordState.mDataFormat, kAudioFileFlags_EraseFile, &_recordState.mAudioFile);
+    CFRelease(cfURL);
+
+    RCTLogInfo(@"Start recording to file: %@", _fileURL);
     
     OSStatus status = AudioQueueNewInput(&_recordState.mDataFormat, HandleInputBuffer, &_recordState, NULL, NULL, 0, &_recordState.mQueue);
     if (status != noErr) {
@@ -91,17 +113,23 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
     _recordState.mIsRunning = false;
 
     NSDictionary *eventData = @{
-      @"filePath": _filePath,
+      @"filePath": [_fileURL absoluteString],
       @"sampleCount": @(_recordState.mCurrentPacket),
       @"sampleRate": @(_recordState.mDataFormat.mSampleRate),
       @"duration": @((double) _recordState.mCurrentPacket / _recordState.mDataFormat.mSampleRate)
     };
 
     resolve(eventData);
+}
 
-    unsigned long long fileSize = [[[NSFileManager defaultManager] attributesOfItemAtPath:_filePath error:nil] fileSize];
-    RCTLogInfo(@"file path %@", _filePath);
-    RCTLogInfo(@"file size %llu", fileSize);
+RCT_EXPORT_METHOD(cleanupFiles: (RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager] removeItemAtURL:FilesDirectory() error:&error]) {
+        reject(@"cleanupFiles", @"removeItemAtURL failed", error);
+    } else {
+        resolve(@YES);
+    }
 }
 
 void HandleInputBuffer(void *inUserData,
@@ -137,25 +165,28 @@ void HandleInputBuffer(void *inUserData,
     //NSString *str = [data base64EncodedStringWithOptions:0];
     //[pRecordState->mSelf sendEventWithName:@"data" body:str];
 
-    UInt32 dataSize = sizeof(AudioQueueLevelMeterState) * 10;
+    if (hasListeners) {
+        UInt32 dataSize = sizeof(AudioQueueLevelMeterState) * 10;
+        AudioQueueLevelMeterState *levels = (AudioQueueLevelMeterState*)malloc(dataSize);
 
-    AudioQueueLevelMeterState *levels = (AudioQueueLevelMeterState*)malloc(dataSize);
+        OSStatus rc = AudioQueueGetProperty(inAQ, kAudioQueueProperty_CurrentLevelMeterDB, levels, &dataSize);
+        if (rc == noErr) {
+            double currentPosition = 0;
+            if (inStartTime != NULL) {
+                currentPosition = inStartTime->mSampleTime / pRecordState->mDataFormat.mSampleRate;
+            }
 
-    OSStatus rc = AudioQueueGetProperty(inAQ, kAudioQueueProperty_CurrentLevelMeterDB, levels, &dataSize);
-    if (rc == noErr) {
-        double currentPosition = 0;
-        if (inStartTime != NULL) {
-            currentPosition = inStartTime->mSampleTime / pRecordState->mDataFormat.mSampleRate;
+            NSDictionary *eventData = @{
+                @"currentPosition": @(currentPosition),
+                @"currentMetering": @(levels[0].mAveragePower),
+                @"average": @(levels[0].mAveragePower),
+                @"peak": @(levels[0].mPeakPower)
+            };
+
+            [pRecordState->mSelf sendEventWithName:@"metering" body:eventData];
         }
 
-        NSDictionary *eventData = @{
-          @"currentPosition": @(currentPosition),
-          @"currentMetering": @(levels[0].mAveragePower),
-          @"average": @(levels[0].mAveragePower),
-          @"peak": @(levels[0].mPeakPower)
-        };
-
-        [pRecordState->mSelf sendEventWithName:@"metering" body:eventData];
+        free(levels);
     }
     
     AudioQueueEnqueueBuffer(pRecordState->mQueue, inBuffer, 0, NULL);
@@ -168,6 +199,14 @@ void HandleInputBuffer(void *inUserData,
 - (void)dealloc {
     RCTLogInfo(@"dealloc");
     AudioQueueDispose(_recordState.mQueue, true);
+}
+
+-(void)startObserving {
+    hasListeners = YES;
+}
+
+-(void)stopObserving {
+    hasListeners = NO;
 }
 
 @end

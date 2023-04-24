@@ -17,5 +17,5 @@ typedef struct {
 
 @interface RNAudioRecord : RCTEventEmitter <RCTBridgeModule>
     @property (nonatomic, assign) AQRecordState recordState;
-    @property (nonatomic, strong) NSString* filePath;
+    @property (nonatomic, strong) NSURL* fileURL;
 @end
