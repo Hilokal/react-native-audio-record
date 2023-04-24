@@ -35,7 +35,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     private AudioRecord recorder;
     private int bufferSize;
 
-    private String outFile;
+    private File outFile;
     volatile private Promise stopRecordingPromise;
 
     public RNAudioRecordModule(ReactApplicationContext reactContext) {
@@ -74,12 +74,12 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
             audioSource = options.getInt("audioSource");
         }
 
-        String documentDirectoryPath = getReactApplicationContext().getFilesDir().getAbsolutePath();
-        outFile = documentDirectoryPath + "/" + "audio.wav";
         if (options.hasKey("wavFile")) {
-            String fileName = options.getString("wavFile");
-            outFile = documentDirectoryPath + "/" + fileName;
+            outFile = new File(getDirectory(), options.getString("wavFile"));
+        } else {
+            outFile = new File(getDirectory(), "audio.wav");
         }
+        outFile.delete();
 
         stopRecordingPromise = null;
         eventEmitter = reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class);
@@ -148,7 +148,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
 
                     WritableMap promiseResult = Arguments.createMap();
-                    promiseResult.putString("filePath", "file://" + outFile);
+                    promiseResult.putString("filePath",  outFile.toURI().toString());
                     promiseResult.putInt("sampleRate", recorder.getSampleRate());
                     promiseResult.putInt("sampleCount", sampleCount);
                     promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
@@ -174,6 +174,25 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     @ReactMethod
     public void stop(Promise promise) {
         setPromise(promise);
+    }
+
+    @ReactMethod
+    public void cleanupFiles(Promise promise) {
+        File directory = getDirectory();
+        Log.d(TAG, "Cleaning directory: " + directory.toString());
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for(File file : files){
+                if(!file.isDirectory() && file.getName().endsWith(".wav")){
+                    file.delete();
+                }
+            }
+        }
+    }
+
+    public File getDirectory() {
+        File parentDir = getReactApplicationContext().getCacheDir();
+        return new File(parentDir, "audio-wav");
     }
 
     synchronized private void setPromise(Promise promise) {
@@ -235,6 +254,11 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
     }
 
     private void saveAsWav(File pcmFile) throws java.io.IOException {
+        File directory = getDirectory();
+        if (directory.mkdir()) {
+            Log.d(TAG, "Created directory: " + directory);
+        }
+
         FileInputStream in = new FileInputStream(pcmFile);
         FileOutputStream out = new FileOutputStream(outFile);
         long totalAudioLen = in.getChannel().size();
