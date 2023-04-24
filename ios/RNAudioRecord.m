@@ -124,9 +124,13 @@ RCT_EXPORT_METHOD(stop:(RCTPromiseResolveBlock)resolve
 
 RCT_EXPORT_METHOD(cleanupFiles: (RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject) {
+    RCTLogInfo(@"cleanupFiles");
+
     NSError *error = nil;
     if (![[NSFileManager defaultManager] removeItemAtURL:FilesDirectory() error:&error]) {
-        reject(@"cleanupFiles", @"removeItemAtURL failed", error);
+        // It's normal for this to fail if the directory doesn't exist. I's
+        // not necessary to raise an error.
+        resolve(@NO);
     } else {
         resolve(@YES);
     }

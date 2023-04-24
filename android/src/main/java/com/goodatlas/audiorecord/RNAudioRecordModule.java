@@ -181,13 +181,18 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         File directory = getDirectory();
         Log.d(TAG, "Cleaning directory: " + directory);
         File[] files = directory.listFiles();
-        if (files != null) {
+        if (files == null) {
+            promise.resolve(false);
+        } else {
+            boolean found = false;
             for(File file : files){
                 if(!file.isDirectory() && file.getName().endsWith(".wav")){
                     Log.d(TAG, "Deleting file: " + file);
                     file.delete();
+                    found = true;
                 }
             }
+            promise.resolve(found);
         }
     }
 

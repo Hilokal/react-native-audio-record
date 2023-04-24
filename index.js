@@ -7,6 +7,8 @@ const AudioRecord = {};
 AudioRecord.init = options => RNAudioRecord.init(options);
 AudioRecord.start = () => RNAudioRecord.start();
 AudioRecord.stop = () => RNAudioRecord.stop();
+AudioRecord.cleanupFiles = () => RNAudioRecord.cleanupFiles();
+AudioRecord.isAvailable = () => { return NativeModules.RNAudioRecord != null; };
 
 const eventsMap = {
   data: 'data',

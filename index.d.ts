@@ -15,8 +15,10 @@ declare module "react-native-audio-record" {
 
   export interface IAudioRecord {
     init: (options: Options) => void;
+    isAvailable: () => boolean;
     start: () => void;
     stop: () => Promise<AudioRecordFinished>;
+    cleanupFiles: () => Promise<any>;
     on: (event: "metering", callback: (data: AudioRecordMeteringEvent) => void) => void;
     removeListener: (event: EventOptions) => void;
   }
