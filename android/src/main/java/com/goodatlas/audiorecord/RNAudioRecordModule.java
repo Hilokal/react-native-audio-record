@@ -79,7 +79,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
         } else {
             outFile = new File(getDirectory(), "audio.wav");
         }
-        outFile.delete();
+        outFile.deleteOnExit();
 
         stopRecordingPromise = null;
         eventEmitter = reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class);
@@ -148,7 +148,7 @@ public class RNAudioRecordModule extends ReactContextBaseJavaModule {
                     int sampleCount = bytesCount / (bytesPerSample * recorder.getChannelCount());
 
                     WritableMap promiseResult = Arguments.createMap();
-                    promiseResult.putString("filePath",  outFile.toURI().toString());
+                    promiseResult.putString("filePath",  "file://" + outFile.toString());
                     promiseResult.putInt("sampleRate", recorder.getSampleRate());
                     promiseResult.putInt("sampleCount", sampleCount);
                     promiseResult.putDouble("duration", ((double)bytesCount / bytesPerSample) / recorder.getSampleRate());
